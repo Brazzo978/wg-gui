@@ -403,6 +403,22 @@ def get_server_public_key():
     except Exception:
         return None
 
+def get_wg_tunnel_status():
+    try:
+        output = subprocess.check_output(["ip", "link", "show", "wg0"]).decode()
+        # Cerca i flag dell'interfaccia fra < e >
+        m = re.search(r"<([^>]+)>", output)
+        if m:
+            flags = m.group(1).split(',')
+            return "UP" in flags
+        return False
+    except Exception:
+        return False
+
+@app.context_processor
+def inject_tunnel_status():
+    return {'tunnel_status': get_wg_tunnel_status()}
+
 # ---------------------
 # Template Definitions
 # ---------------------
@@ -428,6 +444,9 @@ templates = {
            <a class="nav-link" href="{{ url_for('new_client') }}">New Client</a>
          </li>
          <li class="nav-item">
+           <a class="nav-link" href="{{ url_for('restart_wg') }}">Restart WG</a>
+         </li>
+         <li class="nav-item">
            <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
          </li>
       </ul>
@@ -446,6 +465,13 @@ templates = {
   {% endwith %}
   {% block content %}{% endblock %}
 </div>
+<footer class="fixed-bottom bg-light text-center py-2">
+  {% if tunnel_status %}
+    <span class="text-success">Tunnel: OK</span>
+  {% else %}
+    <span class="text-danger">Tunnel: Down</span>
+  {% endif %}
+</footer>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
@@ -575,18 +601,30 @@ def logout():
     flash("Logged out successfully.")
     return redirect(url_for('login'))
 
+@app.route('/restart_wg')
+@login_required
+def restart_wg():
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", "wg-quick@wg0"], check=True)
+        flash("WireGuard restarted successfully!")
+    except Exception:
+        flash("Error restarting WireGuard.")
+    return redirect(url_for('index'))
+
 @app.route('/')
 @login_required
 def index():
     clients = get_client_list()
     wg_status = parse_wg_show()
     client_mapping = get_client_mapping()
+    tunnel_status = get_wg_tunnel_status()
     return render_template('index.html',
                            clients=clients,
                            wg_status=wg_status,
                            client_mapping=client_mapping,
                            handshake_in_seconds=handshake_in_seconds,
-                           parse_transfer=parse_transfer)
+                           parse_transfer=parse_transfer,
+                           tunnel_status=tunnel_status)
 
 @app.route('/new_client', methods=['GET'])
 @login_required
@@ -702,10 +740,8 @@ def delete_client(client_name):
         new_lines = []
         i = 0
         while i < len(lines):
-            # Se troviamo una riga "[Peer]" seguita da "# Client: <client_name>"
             if lines[i].strip() == "[Peer]" and i+1 < len(lines) and lines[i+1].strip() == f"# Client: {client_name}":
-                # Supponendo che il blocco sia di 4 righe ([Peer], commento, PublicKey, AllowedIPs)
-                i += 4
+                i += 4  # Assumiamo che il blocco sia di 4 righe
                 continue
             new_lines.append(lines[i])
             i += 1
@@ -721,9 +757,9 @@ def delete_client(client_name):
     flash(f"Client '{client_name}' deleted successfully!")
     return redirect(url_for('index'))
 
-
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
+
 
 
 EOF
