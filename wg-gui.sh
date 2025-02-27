@@ -694,14 +694,33 @@ def delete_client(client_name):
         flash("Client configuration not found.")
         return redirect(url_for('index'))
     os.remove(client_filename)
-    subprocess.run(["sudo", "sed", "-i", f"/# Client: {client_name}/,+2d", WG_CONF])
+    
+    # Leggi tutto il file WG_CONF e rimuovi il blocco relativo al client.
+    if os.path.exists(WG_CONF):
+        with open(WG_CONF, 'r') as f:
+            lines = f.readlines()
+        new_lines = []
+        i = 0
+        while i < len(lines):
+            # Se troviamo una riga "[Peer]" seguita da "# Client: <client_name>"
+            if lines[i].strip() == "[Peer]" and i+1 < len(lines) and lines[i+1].strip() == f"# Client: {client_name}":
+                # Supponendo che il blocco sia di 4 righe ([Peer], commento, PublicKey, AllowedIPs)
+                i += 4
+                continue
+            new_lines.append(lines[i])
+            i += 1
+        with open(WG_CONF, 'w') as f:
+            f.writelines(new_lines)
+    
     try:
         subprocess.run(["sudo", "systemctl", "restart", "wg-quick@wg0"], check=True)
     except Exception:
         flash("Error restarting WireGuard after deletion.")
         return redirect(url_for('index'))
+    
     flash(f"Client '{client_name}' deleted successfully!")
     return redirect(url_for('index'))
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
