@@ -104,6 +104,7 @@ remove_installation() {
     echo "Removing configuration files and services..."
     rm -f "$WG_CONFIG" "$WG_WEBGUI_SERVICE" "$NGINX_CONF"
     rm -rf "$INSTALL_DIR"
+    rm -rf /etc/wireguard/clients/     # Rimuove anche la directory dei client
     rm -f /etc/nginx/sites-enabled/wg-webgui
     systemctl daemon-reload
     systemctl restart nginx || true
@@ -215,13 +216,25 @@ chown $SUDO_USER:$SUDO_USER "$INSTALL_DIR" 2>/dev/null || chown $USER:$USER "$IN
 cat > "$INSTALL_DIR/app.py" <<'EOF'
 
 # -*- coding: utf-8 -*-
+import os
+import secrets
+
+# Genera o carica una chiave segreta
+SECRET_KEY_FILE = "/opt/wireguard-webgui/secret_key.txt"
+if os.path.exists(SECRET_KEY_FILE):
+    secret_key = open(SECRET_KEY_FILE, "r").read().strip()
+else:
+    secret_key = secrets.token_hex(16)  # genera una chiave di 32 caratteri esadecimali
+    with open(SECRET_KEY_FILE, "w") as f:
+        f.write(secret_key)
+
 from flask import Flask, render_template, request, redirect, url_for, flash, session
-import subprocess, functools, os, io, base64, ipaddress, re
+import subprocess, functools, io, base64, ipaddress, re
 import qrcode
 from jinja2 import DictLoader
 
 app = Flask(__name__)
-app.secret_key = 'change_this_key'
+app.secret_key = secret_key  # Usa la chiave generata
 app.config['ADMIN_USER'] = '__WEBGUI_USER__'
 app.config['ADMIN_PASS'] = '__WEBGUI_PASS__'
 
@@ -428,28 +441,38 @@ templates = {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>WireGuard Dashboard</title>
+  <title>WireGuard Control Panel</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   {% block extra_head %}{% endblock %}
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-  <style> body { padding-top: 70px; } </style>
+  <style>
+    body { padding-top: 70px; }
+    /* Regole personalizzate per i bottoni nel menu */
+    .btn-group a.btn {
+  background-color: #007bff; /* blu primario */
+  border-color: #0069d9;     /* un po' più scuro */
+  color: #fff;               /* testo bianco */
+  margin-left: 5px;
+}
+.btn-group a.btn:hover {
+  background-color: #0062cc;
+  border-color: #005cbf;
+  color: #fff;
+}
+  </style>
 </head>
 <body>
 <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top">
   <div class="container">
     <a class="navbar-brand" href="{{ url_for('index') }}">WireGuard Dashboard</a>
     <div class="collapse navbar-collapse">
-      <ul class="navbar-nav ms-auto">
-         <li class="nav-item">
-           <a class="nav-link" href="{{ url_for('new_client') }}">New Client</a>
-         </li>
-         <li class="nav-item">
-           <a class="nav-link" href="{{ url_for('restart_wg') }}">Restart WG</a>
-         </li>
-         <li class="nav-item">
-           <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
-         </li>
-      </ul>
+      {% if session.logged_in %}
+      <div class="btn-group ms-auto" role="group" aria-label="Navigation">
+         <a class="btn btn-outline-dark" href="{{ url_for('new_client') }}">New Client</a>
+         <a class="btn btn-outline-dark" href="{{ url_for('restart_wg') }}">Restart WG</a>
+         <a class="btn btn-outline-dark" href="{{ url_for('logout') }}">Logout</a>
+      </div>
+      {% endif %}
     </div>
   </div>
 </nav>
@@ -467,13 +490,14 @@ templates = {
 </div>
 <footer class="fixed-bottom bg-light text-center py-2">
   {% if tunnel_status %}
-    <span class="text-success">Tunnel: OK</span>
+    <span class="text-success">Tunnel Status: OK</span>
   {% else %}
-    <span class="text-danger">Tunnel: Down</span>
+    <span class="text-danger">Tunnel Status: Down</span>
   {% endif %}
 </footer>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
+
 </html>
 """,
     'login.html': """
